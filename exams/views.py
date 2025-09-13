@@ -80,26 +80,45 @@ def exam_list(request):
     # Получаем курсы студента
     student_courses = CourseStudent.objects.filter(student=student).values_list('course_id', flat=True)
     
-    # Получаем открытые экзамены
+    # Получаем все экзамены для курсов студента
     exams = Exam.objects.filter(
         course_id__in=student_courses,
-    ).order_by('close_time')
+    ).order_by('open_time')
     
     exam_data = []
     for exam in exams:
         attempts = ExamResult.objects.filter(exam=exam, student=student).count()
-        can_take = exam.attempts_allowed is None or attempts < exam.attempts_allowed
+        max_attempts_reached = exam.attempts_allowed and attempts >= exam.attempts_allowed
+        
+        # Проверяем текущий статус экзамена
+        if exam.is_upcoming():
+            status = 'upcoming'
+        elif exam.is_open():
+            status = 'open'
+        else:
+            status = 'closed'
+        
+        # Проверяем есть ли незавершенный экзамен
         in_progress = ExamResult.objects.filter(
             exam=exam, 
             student=student, 
             status='in_progress'
         ).first()
         
+        # Может ли студент начать экзамен
+        can_access = (
+            not max_attempts_reached and 
+            status == 'open' and 
+            CourseStudent.objects.filter(student=student, course=exam.course).exists()
+        )
+        
         exam_data.append({
             'exam': exam,
             'attempts_made': attempts,
-            'can_take': can_take,
+            'max_attempts_reached': max_attempts_reached,
+            'can_access': can_access,
             'in_progress': in_progress,
+            'status': status,
         })
     
     return render(request, 'exams/exam_list.html', {'exam_data': exam_data})
@@ -174,6 +193,12 @@ def take_exam(request, exam_result_id):
     """Прохождение экзамена"""
     exam_result = get_object_or_404(ExamResult, pk=exam_result_id, student=request.student)
     
+    # ВАЖНО: Проверяем что экзамен еще открыт для прохождения
+    if not exam_result.exam.is_open():
+        messages.error(request, 'Время проведения экзамена истекло')
+        return finalize_exam(exam_result, "time_expired")
+    
+    # Проверяем не истекло ли время экзамена для студента
     if exam_result.is_expired():
         return finalize_exam(exam_result, "time_expired")
     
@@ -212,6 +237,11 @@ def save_answer(request, exam_result_id):
             exam_result__status='in_progress'
         )
         
+        # Проверяем что экзамен еще открыт
+        if not student_answer.exam_result.exam.is_open():
+            return JsonResponse({'success': False, 'error': 'Время проведения экзамена истекло'})
+        
+        # Проверяем время экзамена студента
         if student_answer.exam_result.is_expired():
             return JsonResponse({'success': False, 'error': 'Время истекло'})
 
