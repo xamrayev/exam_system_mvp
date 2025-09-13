@@ -100,7 +100,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Кастомная модель пользователя
-AUTH_USER_MODEL = 'exams.User'
+# AUTH_USER_MODEL = 'exams.User'
 
 # Настройки сессий
 SESSION_COOKIE_AGE = 7200  # 2 часа
