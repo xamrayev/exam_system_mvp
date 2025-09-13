@@ -11,6 +11,8 @@ from django.db import transaction
 from django.db.models import Sum
 from django.core.files.storage import FileSystemStorage
 from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth.decorators import login_required
+
 from .models import *
 
 # ----------------------
@@ -81,8 +83,6 @@ def exam_list(request):
     # Получаем открытые экзамены
     exams = Exam.objects.filter(
         course_id__in=student_courses,
-        open_time__lte=now,
-        close_time__gte=now
     ).order_by('close_time')
     
     exam_data = []
@@ -106,18 +106,40 @@ def exam_list(request):
 
 @student_required
 def start_exam(request, exam_id):
-    """Начало экзамена"""
+    """Начало экзамена - только во время проведения"""
     exam = get_object_or_404(Exam, pk=exam_id)
     student = request.student
     
-    # Проверяем право на прохождение
+    # Проверяем, что экзамен открыт для прохождения
+    if not exam.is_open():
+        if exam.is_upcoming():
+            messages.error(request, f'Экзамен "{exam.name}" еще не начался. Начало: {exam.open_time.strftime("%d.%m.%Y %H:%M")}')
+        else:
+            messages.error(request, f'Экзамен "{exam.name}" уже закрыт. Закрытие: {exam.close_time.strftime("%d.%m.%Y %H:%M")}')
+        return redirect('exam_list')
+    
+    # Проверяем права студента на этот курс
+    if not CourseStudent.objects.filter(student=student, course=exam.course).exists():
+        messages.error(request, 'У вас нет доступа к этому экзамену')
+        return redirect('exam_list')
+    
+    # Проверяем количество попыток
     attempts = ExamResult.objects.filter(exam=exam, student=student).count()
-    can_take = exam.attempts_allowed is None or attempts < exam.attempts_allowed
+    if exam.attempts_allowed and attempts >= exam.attempts_allowed:
+        messages.error(request, f'Исчерпано количество попыток ({exam.attempts_allowed})')
+        return redirect('exam_list')
     
-    if not can_take:
-        return render(request, 'exams/no_attempts.html', {"exam": exam})
+    # Проверяем, нет ли уже начатого экзамена
+    existing_exam = ExamResult.objects.filter(
+        exam=exam, 
+        student=student, 
+        status='in_progress'
+    ).first()
     
-    # Создаем результат экзамена
+    if existing_exam:
+        return redirect('take_exam', exam_result_id=existing_exam.id)
+    
+    # Создаем новый результат экзамена
     exam_result = ExamResult.objects.create(
         exam=exam,
         student=student,
@@ -130,6 +152,11 @@ def start_exam(request, exam_id):
     for exam_subject in exam.exam_subjects.all():
         selected_questions.extend(get_random_questions(exam_subject))
     
+    if not selected_questions:
+        messages.error(request, 'Не найдено вопросов для этого экзамена')
+        exam_result.delete()
+        return redirect('exam_list')
+    
     exam_result.questions.set(selected_questions)
     
     # Создаем записи StudentAnswer
@@ -139,6 +166,7 @@ def start_exam(request, exam_id):
             question=question
         )
     
+    messages.success(request, f'Экзамен "{exam.name}" начат. Удачи!')
     return redirect('take_exam', exam_result_id=exam_result.id)
 
 @student_required
@@ -411,7 +439,7 @@ def process_excel_import(request):
     
     return redirect('import_students')
 
-@staff_member_required
+@login_required
 def export_students_template(request):
     """Экспорт шаблона Excel для импорта студентов"""
     import io
