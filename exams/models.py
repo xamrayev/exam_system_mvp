@@ -1,24 +1,31 @@
 # models.py
 from django.db import models
-from django.contrib.auth.models import AbstractUser
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 import uuid
 from datetime import timedelta
 
-class User(AbstractUser):
-    ROLE_CHOICES = [
-        ('student', 'Студент'),
-        ('admin', 'Администратор'),
-    ]
+class Student(models.Model):
+    """Простая модель студента без наследования от Django User"""
+    student_id = models.CharField(max_length=20, unique=True, verbose_name="ID студента")
+    first_name = models.CharField(max_length=50, verbose_name="Имя")
+    last_name = models.CharField(max_length=50, verbose_name="Фамилия") 
+    group = models.CharField(max_length=50, blank=True, verbose_name="Группа")
+    email = models.EmailField(blank=True, verbose_name="Email")
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True, verbose_name="Активен")
     
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='student')
-    student_id = models.CharField(max_length=20, unique=True, null=True, blank=True)
+    class Meta:
+        verbose_name = "Студент"
+        verbose_name_plural = "Студенты"
+        ordering = ['last_name', 'first_name']
     
-    def save(self, *args, **kwargs):
-        if not self.student_id and self.role == 'student':
-            self.student_id = str(uuid.uuid4())[:8].upper()
-        super().save(*args, **kwargs)
+    def __str__(self):
+        return f"{self.last_name} {self.first_name} ({self.student_id})"
+    
+    @property
+    def full_name(self):
+        return f"{self.last_name} {self.first_name}"
 
 class Course(models.Model):
     name = models.CharField(max_length=200, verbose_name="Название курса")
@@ -34,7 +41,7 @@ class Course(models.Model):
 
 class CourseStudent(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE)
-    student = models.ForeignKey(User, on_delete=models.CASCADE, limit_choices_to={'role': 'student'})
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
     enrolled_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -62,15 +69,17 @@ class Question(models.Model):
     ]
     
     TYPE_CHOICES = [
-        ('single', 'Один правильный ответ'),
-        ('multiple', 'Несколько правильных ответов'),
+        ('single_choice', 'Один правильный ответ'),
+        ('multiple_choice', 'Несколько правильных ответов'),
         ('open', 'Открытый ответ'),
+        ('text', 'Текстовый ответ'),
     ]
     
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='questions')
     text_md = models.TextField(verbose_name="Текст вопроса (Markdown)")
+    text = models.TextField(blank=True, verbose_name="Текст вопроса (обычный)")
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES, default='medium')
-    question_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='single')
+    question_type = models.CharField(max_length=15, choices=TYPE_CHOICES, default='single_choice')
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -78,11 +87,13 @@ class Question(models.Model):
         verbose_name_plural = "Вопросы"
     
     def __str__(self):
-        return f"{self.subject.name} - {self.text_md[:50]}..."
+        text_preview = self.text_md or self.text or "Без текста"
+        return f"{self.subject.name} - {text_preview[:50]}..."
 
 class Answer(models.Model):
     question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='answers')
     text_md = models.TextField(verbose_name="Текст ответа (Markdown)")
+    text = models.TextField(blank=True, verbose_name="Текст ответа (обычный)")
     is_correct = models.BooleanField(default=False, verbose_name="Правильный ответ")
     
     class Meta:
@@ -90,7 +101,9 @@ class Answer(models.Model):
         verbose_name_plural = "Варианты ответов"
     
     def __str__(self):
-        return f"{self.question.text_md[:30]}... - {self.text_md[:30]}..."
+        question_preview = self.question.text_md or self.question.text or "Без вопроса"
+        answer_preview = self.text_md or self.text or "Без ответа"
+        return f"{question_preview[:30]}... - {answer_preview[:30]}..."
 
 class Exam(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='exams')
@@ -155,7 +168,7 @@ class ExamSubject(models.Model):
 
 class ExamResult(models.Model):
     exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name="results")
-    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name="exam_results")
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="exam_results")
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
@@ -167,8 +180,12 @@ class ExamResult(models.Model):
     max_score = models.FloatField(default=0)
     questions = models.ManyToManyField("Question", related_name="exam_results", blank=True)
 
+    class Meta:
+        verbose_name = "Результат экзамена"
+        verbose_name_plural = "Результаты экзаменов"
+
     def __str__(self):
-        return f"{self.student} - {self.exam} ({self.status})"
+        return f"{self.student.full_name} - {self.exam} ({self.status})"
 
     def percentage_score(self):
         """Процент набранных баллов"""
@@ -194,7 +211,6 @@ class ExamResult(models.Model):
         elapsed = timezone.now() - self.start_time
         return max(self.exam.duration - elapsed, timedelta(0))
 
-
 class StudentAnswer(models.Model):
     exam_result = models.ForeignKey(ExamResult, on_delete=models.CASCADE, related_name='student_answers')
     question = models.ForeignKey(Question, on_delete=models.CASCADE)
@@ -210,4 +226,22 @@ class StudentAnswer(models.Model):
         verbose_name_plural = "Ответы студентов"
     
     def __str__(self):
-        return f"{self.exam_result.student.username} - {self.question.text_md[:30]}..."
+        return f"{self.exam_result.student.full_name} - {self.question.text_md[:30] if self.question.text_md else 'Без текста'}..."
+
+# Модель для импорта студентов из Excel
+class StudentImport(models.Model):
+    """Модель для хранения информации об импорте студентов"""
+    uploaded_file = models.FileField(upload_to='imports/students/', verbose_name="Файл Excel")
+    imported_at = models.DateTimeField(auto_now_add=True)
+    imported_by = models.CharField(max_length=100, verbose_name="Импортировал")
+    students_count = models.IntegerField(default=0, verbose_name="Количество студентов")
+    success = models.BooleanField(default=False, verbose_name="Успешно")
+    error_message = models.TextField(blank=True, verbose_name="Сообщение об ошибке")
+    
+    class Meta:
+        verbose_name = "Импорт студентов"
+        verbose_name_plural = "Импорты студентов"
+        ordering = ['-imported_at']
+    
+    def __str__(self):
+        return f"Импорт от {self.imported_at.strftime('%d.%m.%Y %H:%M')} - {self.students_count} студентов"
