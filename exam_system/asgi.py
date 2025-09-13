@@ -1,16 +1,8 @@
-"""
-ASGI config for exam_system project.
-
-It exposes the ASGI callable as a module-level variable named ``application``.
-
-For more information on this file, see
-https://docs.djangoproject.com/en/5.2/howto/deployment/asgi/
-"""
-
+# your_project/asgi.py
 import os
-
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'exam_system.settings')
 
+# Это и есть ваше ASGI-приложение, которое нужно передать Uvicorn
 application = get_asgi_application()
