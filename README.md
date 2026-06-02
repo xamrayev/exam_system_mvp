@@ -18,8 +18,8 @@ MVP-проект онлайн-системы для проведения экз�
 
 ### 1. Клонирование репозитория
 ```bash
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>
+git clone https://github.com/xamrayev/exam_system_mvp.git
+cd exam_system_mvp
 ````
 
 ### 2. Установка зависимостей
